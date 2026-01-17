@@ -9,7 +9,7 @@ const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
 const { data: { session } } = await supabase.auth.getSession();
 if (session) {
     // Already logged in, redirect to plan page
-    window.location.href = '/index.html';
+    window.location.href = './index.html';
 }
 
 // Handle Google login
@@ -26,7 +26,7 @@ googleLoginBtn.addEventListener('click', async () => {
         const { data, error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: window.location.origin + '/index.html'
+                redirectTo: 'https://iamtmj.github.io/GoodDayPlanner/index.html'
             }
         });
 

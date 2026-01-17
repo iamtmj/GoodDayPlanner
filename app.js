@@ -13,7 +13,7 @@ async function checkAuth() {
     
     if (!session) {
         // Not authenticated, redirect to login
-        window.location.href = '/login.html';
+        window.location.href = './login.html';
         return false;
     }
     
@@ -24,7 +24,7 @@ async function checkAuth() {
 // Setup auth state listener
 supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
-        window.location.href = '/login.html';
+        window.location.href = './login.html';
     } else if (event === 'SIGNED_IN') {
         currentUser = session.user;
     }
