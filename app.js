@@ -196,6 +196,17 @@ class DataStore {
 // ===== DATE UTILITIES =====
 
 class DateUtils {
+    // Timezone offset for IST (GMT+5:30)
+    static TIMEZONE_OFFSET_MINUTES = 330; // 5 hours 30 minutes = 330 minutes
+
+    // Get current date/time in IST timezone
+    static getNowIST() {
+        const now = new Date();
+        const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const ist = new Date(utc + (this.TIMEZONE_OFFSET_MINUTES * 60000));
+        return ist;
+    }
+
     static formatDate(date) {
         return date.toISOString().split('T')[0];
     }
@@ -228,12 +239,13 @@ class DateUtils {
     }
 
     static isToday(date) {
-        const today = new Date();
+        const today = this.getToday();
         return this.formatDate(date) === this.formatDate(today);
     }
 
     static getToday() {
-        return new Date();
+        // Return today's date in IST
+        return this.getNowIST();
     }
 
     static getTomorrow() {
@@ -755,6 +767,76 @@ class App {
         document.querySelector('.modal-overlay').addEventListener('click', () => {
             this.closeModal();
         });
+
+        // Reset data button
+        const resetBtn = document.getElementById('reset-data-btn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', async () => {
+                const confirmed = confirm(
+                    '⚠️ WARNING: This will permanently delete ALL your data including:\n\n' +
+                    '• All activity catalog entries\n' +
+                    '• All plans for all dates\n' +
+                    '• All completion records\n\n' +
+                    'This action CANNOT be undone!\n\n' +
+                    'Are you absolutely sure you want to continue?'
+                );
+
+                if (!confirmed) return;
+
+                // Double confirmation
+                const doubleConfirm = confirm(
+                    '🔴 FINAL CONFIRMATION\n\n' +
+                    'Click OK to DELETE ALL DATA permanently.\n' +
+                    'Click Cancel to keep your data safe.'
+                );
+
+                if (!doubleConfirm) return;
+
+                try {
+                    // Show loading state
+                    resetBtn.disabled = true;
+                    resetBtn.textContent = 'Deleting...';
+
+                    // Delete all data from Supabase
+                    const { error: catalogError } = await supabase
+                        .from('activity_catalog')
+                        .delete()
+                        .eq('user_id', this.user.id);
+
+                    const { error: plansError } = await supabase
+                        .from('plans')
+                        .delete()
+                        .eq('user_id', this.user.id);
+
+                    const { error: completionsError } = await supabase
+                        .from('completions')
+                        .delete()
+                        .eq('user_id', this.user.id);
+
+                    if (catalogError || plansError || completionsError) {
+                        throw new Error('Failed to delete some data');
+                    }
+
+                    // Clear local store
+                    this.store.activityCatalog = [];
+                    this.store.plansByDate = {};
+                    this.store.completionByDate = {};
+
+                    // Refresh UI
+                    this.renderCalendar();
+                    this.renderDatePanel();
+                    this.renderDashboard();
+
+                    alert('✅ All data has been successfully deleted.');
+                } catch (error) {
+                    console.error('Reset error:', error);
+                    alert('❌ Failed to delete data. Please try again or contact support.');
+                } finally {
+                    resetBtn.disabled = false;
+                    resetBtn.textContent = 'Reset All Data';
+                }
+            });
+        }
     }
 
     renderDashboard() {
@@ -833,9 +915,10 @@ class App {
                     // Empty placeholder for alignment
                     tile.classList.add('empty');
                 } else if (isFuture) {
-                    // Future dates - disabled/neutral
+                    // Future dates - disabled/neutral (NO click events)
                     tile.classList.add('future');
                     tile.dataset.date = dateStr;
+                    // Do not add any event listeners for future dates
                 } else {
                     // Valid dates (past and today)
                     const stats = this.store.getDailyStats(dateStr);
