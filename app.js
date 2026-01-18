@@ -208,7 +208,11 @@ class DateUtils {
     }
 
     static formatDate(date) {
-        return date.toISOString().split('T')[0];
+        // Format date as YYYY-MM-DD in local timezone (not UTC)
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 
     static parseDate(dateString) {
@@ -539,11 +543,17 @@ class App {
     canEditCompletion(date) {
         const today = DateUtils.getToday();
         const yesterday = DateUtils.addDays(today, -1);
+        
+        // Normalize all dates to date strings for comparison
         const dateStr = DateUtils.formatDate(date);
         const todayStr = DateUtils.formatDate(today);
         const yesterdayStr = DateUtils.formatDate(yesterday);
         
-        return dateStr === todayStr || dateStr === yesterdayStr;
+        // Only today and yesterday can be edited
+        const isToday = dateStr === todayStr;
+        const isYesterday = dateStr === yesterdayStr;
+        
+        return isToday || isYesterday;
     }
 
     setupNavigation() {
