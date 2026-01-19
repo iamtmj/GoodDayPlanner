@@ -537,7 +537,13 @@ class App {
 
     canEditPlan(date) {
         const today = DateUtils.getToday();
-        return date >= today;
+        
+        // Normalize dates to strings for comparison (ignore time component)
+        const dateStr = DateUtils.formatDate(date);
+        const todayStr = DateUtils.formatDate(today);
+        
+        // Can plan for today and future dates
+        return dateStr >= todayStr;
     }
 
     canEditCompletion(date) {
