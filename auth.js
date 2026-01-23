@@ -23,10 +23,14 @@ googleLoginBtn.addEventListener('click', async () => {
         loginError.style.display = 'none';
         googleLoginBtn.disabled = true;
 
+        // Get the current directory path and replace login.html with index.html
+        const currentUrl = window.location.href;
+        const redirectUrl = currentUrl.replace('login.html', 'index.html');
+
         const { data, error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: 'https://iamtmj.github.io/GoodDayPlanner/index.html'
+                redirectTo: redirectUrl
             }
         });
 

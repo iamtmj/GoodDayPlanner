@@ -38,6 +38,7 @@ class DataStore {
         this.activityCatalog = [];
         this.plansByDate = {};
         this.completionByDate = {};
+        this.backlogItems = [];
     }
 
     async init() {
@@ -45,7 +46,8 @@ class DataStore {
         await Promise.all([
             this.loadCatalog(),
             this.loadPlans(),
-            this.loadCompletions()
+            this.loadCompletions(),
+            this.loadBacklog()
         ]);
     }
 
@@ -170,6 +172,67 @@ class DataStore {
             if (error) throw error;
         } catch (e) {
             console.error('Error saving completion:', e);
+        }
+    }
+
+    // Backlog
+    async loadBacklog() {
+        try {
+            const { data, error } = await supabase
+                .from('backlog')
+                .select('*')
+                .eq('user_id', this.userId)
+                .order('created_at');
+
+            if (error) throw error;
+            this.backlogItems = data || [];
+        } catch (e) {
+            console.error('Error loading backlog:', e);
+            this.backlogItems = [];
+        }
+    }
+
+    getBacklog() {
+        return [...this.backlogItems];
+    }
+
+    async addToBacklog(activityId, activityName, originalDate) {
+        try {
+            const { data, error } = await supabase
+                .from('backlog')
+                .insert([{
+                    user_id: this.userId,
+                    activity_id: activityId,
+                    activity_name: activityName,
+                    original_date: originalDate
+                }])
+                .select();
+
+            if (error) throw error;
+            if (data && data[0]) {
+                this.backlogItems.push(data[0]);
+            }
+        } catch (e) {
+            console.error('Error adding to backlog:', e);
+        }
+    }
+
+    async removeFromBacklog(backlogId) {
+        // Update local store first for instant UI update
+        this.backlogItems = this.backlogItems.filter(item => item.id !== backlogId);
+        
+        // Then update database in background
+        try {
+            const { error } = await supabase
+                .from('backlog')
+                .delete()
+                .eq('id', backlogId);
+
+            if (error) throw error;
+        } catch (e) {
+            console.error('Error removing from backlog:', e);
+            // Reload backlog on error to sync
+            await this.loadBacklog();
         }
     }
 
@@ -522,6 +585,7 @@ class App {
                 <div class="activity-item ${isCompleted ? 'completed' : ''} ${!canEdit ? 'readonly' : ''}" data-id="${activity.id}">
                     <div class="activity-checkbox ${isCompleted ? 'checked' : ''} ${!canEdit ? 'disabled' : ''}" data-id="${activity.id}"></div>
                     <span class="activity-name">${this.escapeHtml(activity.name)}</span>
+                    ${!isCompleted ? `<button class="action-btn backlog-btn" data-id="${activity.id}" data-name="${this.escapeHtml(activity.name)}" title="Move to Backlog">⏭</button>` : ''}
                 </div>
             `;
         }).join('');
@@ -533,6 +597,16 @@ class App {
                 });
             });
         }
+        
+        // Add backlog button handlers for all incomplete activities
+        container.querySelectorAll('.backlog-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.moveToBacklog(dateStr, btn.dataset.id, btn.dataset.name);
+            });
+        });
+        
+        // Render backlog section after check activities
+        this.renderBacklogSection();
     }
 
     canEditPlan(date) {
@@ -729,6 +803,73 @@ class App {
         this.renderDatePanel();
     }
 
+    async moveToBacklog(date, activityId, activityName) {
+        // Remove from plan
+        const plan = this.store.getPlan(date);
+        const filtered = plan.filter(a => a.id !== activityId);
+        await this.store.savePlan(date, filtered);
+        
+        // Add to backlog
+        await this.store.addToBacklog(activityId, activityName, date);
+        
+        this.renderCalendar();
+        this.renderDatePanel();
+        this.showSaveStatus();
+    }
+
+    async completeBacklogActivity(backlogId, activityId, activityName) {
+        // Always add to TODAY's date, not the selected date
+        const todayStr = DateUtils.formatDate(DateUtils.getToday());
+        
+        // Add to today's plan
+        const plan = this.store.getPlan(todayStr);
+        plan.push({ id: activityId, name: activityName });
+        await this.store.savePlan(todayStr, plan);
+        
+        // Mark as completed on today
+        const completion = this.store.getCompletion(todayStr);
+        completion[activityId] = true;
+        await this.store.saveCompletion(todayStr, completion);
+        
+        // Remove from backlog (this updates the local store immediately)
+        await this.store.removeFromBacklog(backlogId);
+        
+        // Refresh the UI - backlog list will update immediately
+        this.renderCalendar();
+        this.renderDatePanel(); // This calls renderBacklogSection() which shows updated list
+        this.showSaveStatus();
+    }
+
+    renderBacklogSection() {
+        const backlog = this.store.getBacklog();
+        const container = document.getElementById('backlog-activities');
+        
+        if (!container) return;
+        
+        if (backlog.length === 0) {
+            container.innerHTML = '<div class="empty-state">No backlog activities</div>';
+            return;
+        }
+        
+        container.innerHTML = backlog.map(item => {
+            const originalDate = new Date(item.original_date + 'T00:00:00');
+            return `
+                <div class="activity-item backlog-item" data-backlog-id="${item.id}">
+                    <span class="activity-name">${this.escapeHtml(item.activity_name)}</span>
+                    <span class="backlog-date">${DateUtils.formatShortDate(originalDate)}</span>
+                    <button class="action-btn complete-backlog-btn" data-backlog-id="${item.id}" data-activity-id="${item.activity_id}" data-name="${this.escapeHtml(item.activity_name)}" title="Complete on today's date">✓</button>
+                </div>
+            `;
+        }).join('');
+        
+        // Add event listeners for all backlog completion buttons
+        container.querySelectorAll('.complete-backlog-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.completeBacklogActivity(btn.dataset.backlogId, btn.dataset.activityId, btn.dataset.name);
+            });
+        });
+    }
+
     setupDragAndDrop(container, date) {
         let draggedElement = null;
 
@@ -829,7 +970,12 @@ class App {
                         .delete()
                         .eq('user_id', this.user.id);
 
-                    if (catalogError || plansError || completionsError) {
+                    const { error: backlogError } = await supabase
+                        .from('backlog')
+                        .delete()
+                        .eq('user_id', this.user.id);
+
+                    if (catalogError || plansError || completionsError || backlogError) {
                         throw new Error('Failed to delete some data');
                     }
 
@@ -837,6 +983,7 @@ class App {
                     this.store.activityCatalog = [];
                     this.store.plansByDate = {};
                     this.store.completionByDate = {};
+                    this.store.backlogItems = [];
 
                     // Refresh UI
                     this.renderCalendar();
@@ -856,43 +1003,7 @@ class App {
     }
 
     renderDashboard() {
-        this.renderStats();
         this.renderHeatmap();
-    }
-
-    renderStats() {
-        const today = DateUtils.getToday();
-        const thirtyDaysAgo = DateUtils.addDays(today, -30);
-
-        let totalCompleted = 0;
-        let totalPercentages = [];
-        let bestDay = { date: null, percentage: 0 };
-
-        // Calculate stats for last 30 days
-        for (let d = new Date(thirtyDaysAgo); d <= today; d.setDate(d.getDate() + 1)) {
-            const dateStr = DateUtils.formatDate(d);
-            const stats = this.store.getDailyStats(dateStr);
-
-            if (stats.total > 0) {
-                totalCompleted += stats.completed;
-                totalPercentages.push(stats.percentage);
-
-                if (stats.percentage > bestDay.percentage) {
-                    bestDay = { date: new Date(d), percentage: stats.percentage };
-                }
-            }
-        }
-
-        // Average
-        const avgScore = totalPercentages.length > 0
-            ? Math.round(totalPercentages.reduce((a, b) => a + b, 0) / totalPercentages.length)
-            : 0;
-
-        document.getElementById('avg-score').textContent = `${avgScore}%`;
-        document.getElementById('best-day').textContent = bestDay.date
-            ? `${bestDay.percentage}% (${DateUtils.formatShortDate(bestDay.date)})`
-            : '—';
-        document.getElementById('total-completed').textContent = totalCompleted;
     }
 
     renderHeatmap() {
